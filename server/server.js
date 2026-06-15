@@ -118,7 +118,7 @@ app.get('/api/today', (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: '服务器错�? });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
@@ -151,7 +151,7 @@ app.post('/api/answer', (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: '服务器错�? });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
@@ -165,16 +165,20 @@ app.get('/api/history', (req, res) => {
     const daysInMonth = new Date(y, m, 0).getDate();
     const calendar = [];
 
+    const missedReasons = data.missedReasons || {};
     for (let day = 1; day <= daysInMonth; day++) {
       const dateStr = `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       const entry = data.answers[dateStr];
+      const missedReason = missedReasons[dateStr] || null;
       calendar.push({
         date: dateStr,
         day: day,
         hasQuestion: !!entry,
         answered: !!(entry && entry.answered),
         answer: entry ? entry.answer : '',
-        question: entry ? entry.question : ''
+        question: entry ? entry.question : '',
+        hasMissedReason: !!missedReason,
+        missedReason: missedReason
       });
     }
 
@@ -216,7 +220,7 @@ app.get('/api/history', (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: '服务器错�? });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
@@ -229,13 +233,88 @@ app.get('/api/question-bank', (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: '服务器错�? });
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+app.get('/api/missed-reasons', (req, res) => {
+  try {
+    const data = readData();
+    res.json({
+      success: true,
+      data: data.missedReasons || {}
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+app.post('/api/missed-reason', (req, res) => {
+  try {
+    const { date, reason } = req.body;
+    if (!date || typeof reason !== 'string') {
+      return res.status(400).json({ success: false, message: '参数无效' });
+    }
+    const todayStr = getDateString();
+    if (date >= todayStr) {
+      return res.status(400).json({ success: false, message: '只能为过去的日期添加断更说明' });
+    }
+    const data = readData();
+    if (!data.answers[date]) {
+      return res.status(400).json({ success: false, message: '该日期没有分配问题' });
+    }
+    if (!data.missedReasons) {
+      data.missedReasons = {};
+    }
+    const trimmedReason = reason.trim();
+    if (trimmedReason.length === 0) {
+      delete data.missedReasons[date];
+    } else {
+      data.missedReasons[date] = {
+        reason: trimmedReason,
+        createdAt: data.missedReasons[date]?.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+    }
+    writeData(data);
+    res.json({
+      success: true,
+      data: data.missedReasons[date] || null
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: '服务器错误' });
+  }
+});
+
+app.delete('/api/missed-reason/:date', (req, res) => {
+  try {
+    const { date } = req.params;
+    if (!date) {
+      return res.status(400).json({ success: false, message: '日期无效' });
+    }
+    const data = readData();
+    if (!data.missedReasons) {
+      data.missedReasons = {};
+    }
+    if (!data.missedReasons[date]) {
+      return res.status(404).json({ success: false, message: '该日期没有断更说明' });
+    }
+    delete data.missedReasons[date];
+    writeData(data);
+    res.json({
+      success: true
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`每日问答后端服务已启�? http://localhost:${PORT}`);
+  console.log(`每日问答后端服务已启动 http://localhost:${PORT}`);
   const data = readData();
   ensureTodayQuestion(data);
-  console.log(`今日问题已准备就�? ${data.currentQuestion.question}`);
+  console.log(`今日问题已准备就绪 ${data.currentQuestion.question}`);
 });

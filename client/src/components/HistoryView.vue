@@ -35,6 +35,7 @@
         @click="selectDay(day)"
       >
         <span v-if="day" class="day-num">{{ day.day }}</span>
+        <span v-if="day && day.hasMissedReason" class="missed-reason-dot" title="已有断更说明">📝</span>
       </div>
     </div>
 
@@ -46,6 +47,10 @@
       <div class="legend-item">
         <div class="legend-box missed"></div>
         <span>断更（应回答未答）</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-box missed-with-reason"></div>
+        <span>断更（已有说明）</span>
       </div>
       <div class="legend-item">
         <div class="legend-box today"></div>
@@ -64,7 +69,60 @@
         <div v-if="selectedDay.answered && selectedDay.answer">
           <p class="a-text">{{ selectedDay.answer }}</p>
         </div>
-        <div v-else class="empty-note">这一天没有回答</div>
+        <div v-else class="unanswered-block">
+          <div class="empty-note-sm">⚠️ 这一天没有回答</div>
+
+          <div v-if="!isEditingReason && selectedDay.missedReason" class="reason-display">
+            <div class="reason-header">
+              <span class="reason-label">📝 断更说明：</span>
+              <span class="reason-updated">{{ formatDateTime(selectedDay.missedReason.updatedAt) }}</span>
+            </div>
+            <p class="reason-text">{{ selectedDay.missedReason.reason }}</p>
+            <div class="reason-actions">
+              <button class="btn-secondary" @click="startEditReason">
+                ✏️ 编辑说明
+              </button>
+              <button class="btn-danger" @click="deleteReason" :disabled="deletingReason">
+                {{ deletingReason ? '删除中...' : '🗑️ 删除说明' }}
+              </button>
+            </div>
+          </div>
+
+          <div v-else-if="!isEditingReason" class="reason-empty">
+            <button
+              class="btn-primary-sm"
+              @click="startEditReason"
+              :disabled="!isPast(selectedDay.date)"
+            >
+              + 添加断更原因
+            </button>
+            <span v-if="!isPast(selectedDay.date)" class="hint-text">（仅可对过去日期添加）</span>
+          </div>
+
+          <div v-if="isEditingReason" class="reason-edit-form">
+            <label class="reason-edit-label">
+              {{ selectedDay.missedReason ? '编辑断更原因：' : '添加断更原因：' }}
+            </label>
+            <textarea
+              v-model="reasonInput"
+              class="reason-textarea"
+              placeholder="请输入这一天未回答的原因，例如：出差、生病、工作太忙等..."
+              rows="3"
+            ></textarea>
+            <div class="reason-edit-actions">
+              <button
+                class="btn-primary"
+                @click="saveReason"
+                :disabled="savingReason || !reasonInput.trim()"
+              >
+                {{ savingReason ? '保存中...' : '💾 保存' }}
+              </button>
+              <button class="btn-secondary" @click="cancelEditReason">
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
       <div v-else class="empty-note">这一天还没有分配问题</div>
     </div>
@@ -81,10 +139,14 @@ const props = defineProps({
   loading: Boolean
 })
 
-defineEmits(['prev-month', 'next-month'])
+const emit = defineEmits(['prev-month', 'next-month', 'refresh'])
 
 const weekdays = ['日', '一', '二', '三', '四', '五', '六']
 const selectedDay = ref(null)
+const isEditingReason = ref(false)
+const reasonInput = ref('')
+const savingReason = ref(false)
+const deletingReason = ref(false)
 
 const fullCalendar = computed(() => {
   if (!props.history?.calendar) return []
@@ -121,7 +183,11 @@ function getDayClass(day) {
   if (day.answered) {
     classes.push('answered')
   } else if (day.hasQuestion && isPast(day.date)) {
-    classes.push('missed')
+    if (day.hasMissedReason) {
+      classes.push('missed-with-reason')
+    } else {
+      classes.push('missed')
+    }
   } else if (day.hasQuestion) {
     classes.push('has-question')
   }
@@ -131,6 +197,8 @@ function getDayClass(day) {
 function selectDay(day) {
   if (day && day.hasQuestion) {
     selectedDay.value = day
+    isEditingReason.value = false
+    reasonInput.value = ''
   } else {
     selectedDay.value = null
   }
@@ -143,7 +211,84 @@ function formatFullDate(dateStr) {
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${weekdays[d.getDay()]}`
 }
 
+function formatDateTime(isoStr) {
+  if (!isoStr) return ''
+  const d = new Date(isoStr)
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function startEditReason() {
+  if (selectedDay.value) {
+    isEditingReason.value = true
+    reasonInput.value = selectedDay.value.missedReason?.reason || ''
+  }
+}
+
+function cancelEditReason() {
+  isEditingReason.value = false
+  reasonInput.value = ''
+}
+
+async function saveReason() {
+  if (!selectedDay.value || !reasonInput.value.trim()) return
+  savingReason.value = true
+  try {
+    const res = await fetch('/api/missed-reason', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        date: selectedDay.value.date,
+        reason: reasonInput.value.trim()
+      })
+    })
+    const json = await res.json()
+    if (json.success) {
+      isEditingReason.value = false
+      reasonInput.value = ''
+      emit('refresh')
+    } else {
+      alert(json.message || '保存失败')
+    }
+  } catch (e) {
+    alert('网络错误，保存失败')
+  } finally {
+    savingReason.value = false
+  }
+}
+
+async function deleteReason() {
+  if (!selectedDay.value) return
+  if (!confirm('确定要删除这个断更说明吗？')) return
+  deletingReason.value = true
+  try {
+    const res = await fetch(`/api/missed-reason/${selectedDay.value.date}`, {
+      method: 'DELETE'
+    })
+    const json = await res.json()
+    if (json.success) {
+      isEditingReason.value = false
+      reasonInput.value = ''
+      emit('refresh')
+    } else {
+      alert(json.message || '删除失败')
+    }
+  } catch (e) {
+    alert('网络错误，删除失败')
+  } finally {
+    deletingReason.value = false
+  }
+}
+
 watch(() => props.history, () => {
-  selectedDay.value = null
+  if (selectedDay.value && props.history?.calendar) {
+    const updated = props.history.calendar.find(d => d.date === selectedDay.value.date)
+    if (updated) {
+      selectedDay.value = updated
+    } else {
+      selectedDay.value = null
+    }
+  }
+  isEditingReason.value = false
+  reasonInput.value = ''
 })
 </script>

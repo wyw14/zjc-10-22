@@ -37,6 +37,7 @@
       :loading="historyLoading"
       @prev-month="prevMonth"
       @next-month="nextMonth"
+      @refresh="loadHistory"
     />
 
     <div v-if="toast.show" class="toast" :class="{ error: toast.isError }">
