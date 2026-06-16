@@ -140,6 +140,10 @@ app.post('/api/answer', (req, res) => {
       answeredAt: answer.trim().length > 0 ? new Date().toISOString() : null
     };
 
+    if (answer.trim().length > 0 && data.missedReasons && data.missedReasons[todayStr]) {
+      delete data.missedReasons[todayStr];
+    }
+
     writeData(data);
     res.json({
       success: true,
@@ -169,7 +173,8 @@ app.get('/api/history', (req, res) => {
     for (let day = 1; day <= daysInMonth; day++) {
       const dateStr = `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       const entry = data.answers[dateStr];
-      const missedReason = missedReasons[dateStr] || null;
+      const hasMissedReason = !!(entry && !entry.answered && missedReasons[dateStr]);
+      const missedReason = hasMissedReason ? missedReasons[dateStr] : null;
       calendar.push({
         date: dateStr,
         day: day,
@@ -177,7 +182,7 @@ app.get('/api/history', (req, res) => {
         answered: !!(entry && entry.answered),
         answer: entry ? entry.answer : '',
         question: entry ? entry.question : '',
-        hasMissedReason: !!missedReason,
+        hasMissedReason: hasMissedReason,
         missedReason: missedReason
       });
     }
@@ -264,6 +269,9 @@ app.post('/api/missed-reason', (req, res) => {
     if (!data.answers[date]) {
       return res.status(400).json({ success: false, message: '该日期没有分配问题' });
     }
+    if (data.answers[date].answered) {
+      return res.status(400).json({ success: false, message: '该日期已回答，无需添加断更说明' });
+    }
     if (!data.missedReasons) {
       data.missedReasons = {};
     }
@@ -300,6 +308,9 @@ app.delete('/api/missed-reason/:date', (req, res) => {
     }
     if (!data.missedReasons[date]) {
       return res.status(404).json({ success: false, message: '该日期没有断更说明' });
+    }
+    if (data.answers[date]?.answered) {
+      return res.status(400).json({ success: false, message: '该日期已回答，无法删除断更说明' });
     }
     delete data.missedReasons[date];
     writeData(data);
